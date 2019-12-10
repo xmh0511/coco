@@ -30,7 +30,7 @@ struct context<> {
 	}
 };
 template<typename Ret>
-struct context<Ret>: context<> {
+struct context<Ret> : context<> {
 	std::function<Ret()> func_;
 };
 enum regs_type {
@@ -59,8 +59,8 @@ public:
 		ctx_index_++;
 	}
 public:
-	template<typename Function,typename...Args>
-	static auto co_create(Function&& function,Args&&...args)->context<decltype(function(std::forward<Args>(args)...))>* {
+	template<typename Function, typename...Args>
+	static auto co_create(Function&& function, Args&&...args)->context<decltype(function(std::forward<Args>(args)...))>* {
 		using Ret = decltype(function(std::forward<Args>(args)...));
 		std::function<Ret()> func = std::bind(std::forward<Function>(function), std::forward<Args>(args)...);
 		auto ctx_ = new context<Ret>();
@@ -87,18 +87,37 @@ public:
 		this_.ctx_index_--;
 		swap_context(current, last);
 	}
-	static context<>* co_shared() {
+	static context<>* add_task() {
 		auto& this_ = instance();
 		auto current = this_.context_stack_[this_.ctx_index_ - 1];
 		this_.task_list_.push_back(current);
 		return current;
 	}
 	static void resume(context<>* ctx) {
-		static context<> tmp_ctx;
-		auto& this_ = instance();
-		this_.context_stack_.push_back(ctx);
-		this_.ctx_index_++;
-		swap_context(&tmp_ctx, ctx);
+		ctx->state_ = context_state::ready;
+	}
+
+	static void co_wait() {
+		auto& this_ = coco::instance();
+		auto& list = this_.task_list_;
+		this_.wait_ctx_ = coco::co_create([list, wait_ctx_ = this_.wait_ctx_]() mutable{
+			while (true) {
+				for (auto iter = list.begin(); iter != list.end();) {
+					if ((*iter)->state_ == context_state::ready) {
+						auto ctx = static_cast<context<void>*>(*iter);
+						coco::co_resume(ctx);
+						iter = list.erase(iter);
+						continue;
+					}
+					iter++;
+				}
+				if (list.size() == 0) {
+					return;
+				}
+			}
+		});
+		this_.wait_ctx_->id = 102;
+		coco::co_resume(this_.wait_ctx_);
 	}
 
 private:
@@ -132,7 +151,7 @@ private:
 		char* sp = ctx->stack_ + ctx->stack_size_;
 		sp = (char*)((unsigned long)sp & -16L);
 		ctx_params_t* params = (ctx_params_t*)(sp - sizeof(ctx_params_t));
-		auto current = this_.context_stack_[this_.ctx_index_ - 1];
+		auto current = this_.context_stack_[this_.ctx_index_ - 2];
 		params->s0 = ctx;
 		params->s1 = current;
 		char* esp = sp - sizeof(ctx_params_t) - sizeof(void*);
@@ -148,6 +167,7 @@ private:
 	std::vector<context<>*> context_stack_;
 	std::vector<std::shared_ptr<context<>>> unused_context_;
 	std::vector<context<>*> task_list_;
+	context<void>* wait_ctx_;
 };
 
 
@@ -169,18 +189,27 @@ struct ctx {
 
 void func0() {
 	int v = 2048;
-	std::cout << "in func0 "<< v << std::endl;
+	std::cout << "in func0 " << v << std::endl;
+	auto current = coco::add_task();
+	std::thread t0([current]() {
+		std::this_thread::sleep_for(std::chrono::seconds(3));
+		coco::resume(current);
+	});
+	t0.detach();
 	coco::co_yiled();
-	std::cout << "I am back "<<v << std::endl;
+	std::cout << "I am back " << v << std::endl;
 }
 int main() {
 	auto ctx = coco::co_create(&func0);
 	auto ctx1 = coco::co_create(&func1);
 	ctx->id = 1;
 	coco::co_resume(ctx);
-	coco::co_resume(ctx1);
+	//coco::co_resume(ctx1);
 	std::cout << "abc" << std::endl;
-	coco::co_resume(ctx);
-	coco::co_resume(ctx1);
+	//coco::co_resume(ctx);
+	//coco::co_resume(ctx1);
+	coco::co_wait();
+	//std::this_thread::sleep_for(std::chrono::seconds(4));
+	//coco::co_resume(ctx);
 	std::getchar();
 }
