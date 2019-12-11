@@ -20,11 +20,11 @@ void func1() {
 }
 
 int main() {
-	auto ctx = coco::co_create(&func0);
-	auto ctx1 = coco::co_create(&func1);
-	ctx->id = 1;
+	auto ctx = coco::co_create(func0);
+	auto ctx1 = coco::co_create(func1);
 	coco::co_resume(ctx);
 	coco::co_resume(ctx1);
 	std::cout << "abc" << std::endl;
+	coco::co_resume(ctx1);
 	coco::co_wait();
 }
